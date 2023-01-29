@@ -1,17 +1,17 @@
 import os
 import telegram.ext
-
-Token = "TOKEN"
-
-from telegram import ForceReply, Update
+import json
+import logging
+import io
+import requests
+import numpy as np
+from difflib import get_close_matches
+import requests
+from telegram import ForceReply, Update, File
 from telegram.ext import MessageHandler, filters, Application, ContextTypes, CommandHandler, ConversationHandler
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
-import json
-import logging
-
-import requests
-from difflib import get_close_matches
+Token = "TOKEN"
 
 # Enable logging
 logging.basicConfig(
@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DISPATCH_START_INPUT, TOPIC, INPUT_TEXT, CHOICE, RESULT, ASTRO_INPUT, ASTRO_OUTPUT  = range(7)
+DISPATCH_START_INPUT, TOPIC, INPUT_TEXT, CHOICE, RESULT, ASTRO_INPUT, ASTRO_OUTPUT, ECG_INPUT, ECG_OUTPUT  = range(9)
 INPUT_RECEIVED = ""
 
 RES = []
@@ -65,7 +65,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Starts the conversation and asks the user about their gender."""
 
-    reply_keyboard = [["FAQ", "Astro"]]
+    reply_keyboard = [["FAQ", "Astro", "Read ECG"]]
     
     await update.message.reply_text(
         "Hi! My name is Bottino. \n"
@@ -97,6 +97,11 @@ async def dispatchStartInput(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Great, please type your sign to get today horoscope.")
 
         return ASTRO_OUTPUT
+    
+    if update.message.text == "Read ECG":
+        await update.message.reply_text("Please upload an ECG file")
+        print("HERE")
+        return ECG_INPUT
 
 
 #########################
@@ -183,6 +188,53 @@ async def getHoroscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     return ASTRO_OUTPUT
 
+#########################
+######### ECG ###########
+#########################
+
+async def getECGFile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Ask to digit the sign."""
+    print("IN ECG INPUT")
+    print(update.message.text)
+
+    print(update.message.document)
+
+    my_file = await context.bot.get_file(update.message.document)
+
+    await my_file.download_to_drive("ecgs/" + update.message.document.file_name)
+    analysis = await response(update.message.document.file_name)
+
+    await update.message.reply_text(analysis)
+        
+    return ECG_OUTPUT
+
+async def response(fileName):
+    ecg = np.genfromtxt("ecgs/" + fileName, delimiter=',')[:5000]
+    
+    pload = {"fs":250, "ecg":[i for i in ecg]}
+
+    import requests
+    import json
+
+    url = "http://youcareapi-env.eba-jhca6udg.eu-central-1.elasticbeanstalk.com/youcareapi/analyzeFullSignal"
+
+    payload = json.dumps(pload)
+    headers = {
+    'Content-Type': 'application/json'
+    }
+
+    response = requests.request("POST", url, headers=headers, data=payload)
+
+    print(response.text)
+
+    return response.text
+
+async def getECGOutput(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Ask to digit the sign."""
+    print("IN ECG OUTPUT")
+
+    return "HELLO"
+
 def main():
 
     global data
@@ -208,6 +260,8 @@ def main():
             RESULT: [MessageHandler(filters.TEXT & ~filters.COMMAND, answerFinder)],
             ASTRO_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, askForSign)],
             ASTRO_OUTPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, getHoroscope)],
+            ECG_INPUT: [MessageHandler(filters.Document.ALL & ~filters.COMMAND, getECGFile)],
+            ECG_OUTPUT: [MessageHandler(filters.Document.ALL & ~filters.COMMAND, getECGOutput)]
         },
         fallbacks=[CommandHandler("exit", cancel)],
     )
